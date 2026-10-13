@@ -47,6 +47,7 @@ class DavTasksHelper(val context: Context) {
         private const val EXDATE_UTC_PATTERN = "yyyyMMdd'T'HHmmss'Z'"
         private const val DAY_CODE_LENGTH = 8
         private const val MINUTE_MS = 60_000L
+        private const val DAY_SECONDS = 86_400L
         private const val PERCENT_COMPLETED = 100
 
         // columns that belong to the remote copy of a task, they are not kept when a task moves to another list
@@ -371,7 +372,8 @@ class DavTasksHelper(val context: Context) {
             try {
                 when {
                     value.length < DAY_CODE_LENGTH -> null
-                    isAllDay || value.length == DAY_CODE_LENGTH -> value.substring(0, DAY_CODE_LENGTH)
+                    isAllDay -> shiftDayCode(value.substring(0, DAY_CODE_LENGTH), recurrenceOffset / DAY_SECONDS)
+                    value.length == DAY_CODE_LENGTH -> value
                     else -> {
                         val zone = if (value.endsWith("Z")) DateTimeZone.UTC else DateTimeZone.forID(timeZone)
                         val dateTime = DateTimeFormat.forPattern(EXDATE_PATTERN).withZone(zone)
@@ -395,7 +397,7 @@ class DavTasksHelper(val context: Context) {
         val start = Formatter.getDateTimeFromTS(task.startTS)
         return task.repetitionExceptions.joinToString(",") { dayCode ->
             if (task.getIsAllDay()) {
-                dayCode
+                shiftDayCode(dayCode, -recurrenceOffset / DAY_SECONDS)
             } else {
                 Formatter.getLocalDateTimeFromCode(dayCode)
                     .withTime(start.hourOfDay, start.minuteOfHour, start.secondOfMinute, 0)
@@ -406,12 +408,20 @@ class DavTasksHelper(val context: Context) {
         }
     }
 
+    private fun shiftDayCode(dayCode: String, days: Long) = if (days == 0L) {
+        dayCode
+    } else {
+        Formatter.getDayCodeFromDateTime(Formatter.getDateTimeFromCode(dayCode).plusDays(days.toInt()))
+    }
+
     private fun getTaskListIdOfCalendar(calendarId: Long): Long {
         return context.calendarsDB.getCalendarWithId(calendarId)?.davTaskListId ?: 0L
     }
 
     /** DAVx⁵ discards local changes in read-only lists, and fails on local deletions in them. */
     fun isTaskListWritable(taskListId: Long) = getTaskLists(listOf(taskListId)).firstOrNull()?.canWrite() == true
+
+    fun isReadOnlyTask(task: Event) = task.isDavTask() && !isTaskListWritable(task.getDavTaskListId())
 
     /** Checks if [task] can be stored in the calendar [calendarId], the task lists involved have to be writable. */
     fun canWriteTask(task: Event, calendarId: Long): Boolean {
@@ -422,7 +432,9 @@ class DavTasksHelper(val context: Context) {
     }
 
     /** Adds a task that was just stored in the app database to the provider, if its calendar is a synced task list. */
-    fun insertTask(task: Event) {
+    fun insertTask(task: Event) = synchronized(pullLock) { insertTaskLocked(task) }
+
+    private fun insertTaskLocked(task: Event) {
         if (task.id == null) {
             return
         }
@@ -459,7 +471,9 @@ class DavTasksHelper(val context: Context) {
     }
 
     /** Updates the provider after a task was updated in the app database, also handles moving it between lists. */
-    fun updateTask(task: Event) {
+    fun updateTask(task: Event) = synchronized(pullLock) { updateTaskLocked(task) }
+
+    private fun updateTaskLocked(task: Event) {
         val targetListId = getTaskListIdOfCalendar(task.calendarId)
         val currentListId = task.getDavTaskListId()
         when {
@@ -512,7 +526,8 @@ class DavTasksHelper(val context: Context) {
 
         val uri = context.contentResolver.insert(Tasks.getContentUri(), values) ?: return
         val newRemoteId = ContentUris.parseId(uri)
-        copyProperties(oldRemoteId, newRemoteId)
+        copyProperties(oldRemoteId, newRemoteId, includeAlarms = false)
+        copyExceptions(oldRemoteId, newRemoteId, targetListId)
         writeAlarms(newRemoteId, task, getAlarmReference(values))
         if (isTaskListWritable(currentListId)) {
             context.contentResolver.delete(ContentUris.withAppendedId(Tasks.getContentUri(), oldRemoteId), null, null)
@@ -534,16 +549,41 @@ class DavTasksHelper(val context: Context) {
         return values
     }
 
-    // alarms are rewritten by writeAlarms
-    private fun copyProperties(fromRemoteId: Long, toRemoteId: Long) {
+    // the alarms of a moved task are rewritten by writeAlarms
+    private fun copyProperties(fromRemoteId: Long, toRemoteId: Long, includeAlarms: Boolean) {
         val columns = (listOf(Properties.MIMETYPE) + Properties.DATA_COLUMNS).toTypedArray()
-        val selection = "${Properties.TASK_ID} = ? AND ${Properties.MIMETYPE} != ?"
-        val selectionArgs = arrayOf(fromRemoteId.toString(), Alarm.CONTENT_ITEM_TYPE)
-        query(Properties.getContentUri(), columns, selection, selectionArgs) { cursor ->
-            val values = cursor.toContentValues().apply {
-                put(Properties.TASK_ID, toRemoteId)
-            }
-            context.contentResolver.insert(Properties.getContentUri(), values)
+        val selection = if (includeAlarms) {
+            "${Properties.TASK_ID} = ?"
+        } else {
+            "${Properties.TASK_ID} = ? AND ${Properties.MIMETYPE} != '${Alarm.CONTENT_ITEM_TYPE}'"
+        }
+
+        val properties = ArrayList<ContentValues>()
+        query(Properties.getContentUri(), columns, selection, arrayOf(fromRemoteId.toString())) { cursor ->
+            properties.add(cursor.toContentValues())
+        }
+
+        properties.forEach {
+            it.put(Properties.TASK_ID, toRemoteId)
+            context.contentResolver.insert(Properties.getContentUri(), it)
+        }
+    }
+
+    // overridden occurrences (RECURRENCE-ID) are separate rows linked to the main task
+    private fun copyExceptions(fromRemoteId: Long, toRemoteId: Long, targetListId: Long) {
+        val columns = (TasksDatabaseHelper.TASK_COLUMNS - NOT_MOVED_TASK_COLUMNS + TasksContract._ID).toTypedArray()
+        val exceptions = ArrayList<ContentValues>()
+        query(Tasks.getContentUri(), columns, "${Tasks.ORIGINAL_INSTANCE_ID} = ?", arrayOf(fromRemoteId.toString())) {
+            exceptions.add(it.toContentValues())
+        }
+
+        exceptions.forEach { values ->
+            val exceptionId = values.getAsLong(TasksContract._ID)
+            values.remove(TasksContract._ID)
+            values.put(Tasks.LIST_ID, targetListId)
+            values.put(Tasks.ORIGINAL_INSTANCE_ID, toRemoteId)
+            val uri = context.contentResolver.insert(Tasks.getContentUri(), values) ?: return@forEach
+            copyProperties(exceptionId, ContentUris.parseId(uri), includeAlarms = true)
         }
     }
 
@@ -553,7 +593,9 @@ class DavTasksHelper(val context: Context) {
         Alarm.ALARM_REFERENCE_START_DATE
     }
 
-    fun deleteTask(task: Event) {
+    fun deleteTask(task: Event) = synchronized(pullLock) { deleteTaskLocked(task) }
+
+    private fun deleteTaskLocked(task: Event) {
         if (!task.isDavTask() || !isTaskListWritable(task.getDavTaskListId())) {
             return
         }
@@ -566,7 +608,11 @@ class DavTasksHelper(val context: Context) {
         requestSync(task.getDavTaskListId())
     }
 
-    fun updateTaskCompletion(task: Event, completed: Boolean) {
+    fun updateTaskCompletion(task: Event, completed: Boolean) = synchronized(pullLock) {
+        updateTaskCompletionLocked(task, completed)
+    }
+
+    private fun updateTaskCompletionLocked(task: Event, completed: Boolean) {
         // the completion of recurring tasks is kept per occurrence and stays local
         if (!task.isDavTask() || task.repeatInterval != 0 || !isTaskListWritable(task.getDavTaskListId())) {
             return
@@ -734,19 +780,6 @@ class DavTasksHelper(val context: Context) {
         return if (isNull(index)) null else getString(index)?.toLongOrNull() ?: getLong(index)
     }
 
-    private fun Cursor.toContentValues() = ContentValues().apply {
-        for (index in 0 until columnCount) {
-            val column = getColumnName(index)
-            when (getType(index)) {
-                Cursor.FIELD_TYPE_NULL -> putNull(column)
-                Cursor.FIELD_TYPE_INTEGER -> put(column, getLong(index))
-                Cursor.FIELD_TYPE_FLOAT -> put(column, getDouble(index))
-                Cursor.FIELD_TYPE_BLOB -> put(column, getBlob(index))
-                else -> put(column, getString(index))
-            }
-        }
-    }
-
     private fun Cursor.string(column: String): String? {
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getString(index)
@@ -754,4 +787,17 @@ class DavTasksHelper(val context: Context) {
 
     // the fields mirrored from the provider, to find out if a stored task has to be updated
     private fun Event.getSyncSignature() = copy(id = null, lastUpdated = 0L, flags = flags and FLAG_ALL_DAY)
+}
+
+private fun Cursor.toContentValues() = ContentValues().apply {
+    for (index in 0 until columnCount) {
+        val column = getColumnName(index)
+        when (getType(index)) {
+            Cursor.FIELD_TYPE_NULL -> putNull(column)
+            Cursor.FIELD_TYPE_INTEGER -> put(column, getLong(index))
+            Cursor.FIELD_TYPE_FLOAT -> put(column, getDouble(index))
+            Cursor.FIELD_TYPE_BLOB -> put(column, getBlob(index))
+            else -> put(column, getString(index))
+        }
+    }
 }

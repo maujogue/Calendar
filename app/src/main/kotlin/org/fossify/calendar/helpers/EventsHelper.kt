@@ -362,11 +362,12 @@ class EventsHelper(val context: Context) {
         deleteFromCalDAV: Boolean,
         updateWidgets: Boolean = true
     ) {
-        if (ids.isEmpty()) {
+        val idsToDelete = if (deleteFromCalDAV) getIdsWithoutReadOnlyTasks(ids) else ids
+        if (idsToDelete.isEmpty()) {
             return
         }
 
-        ids.chunked(CHOPPED_LIST_DEFAULT_SIZE).forEach {
+        idsToDelete.chunked(CHOPPED_LIST_DEFAULT_SIZE).forEach {
             val eventsWithImportId = eventsDB.getEventsByIdsWithImportIds(it)
             val davTasks = if (deleteFromCalDAV) {
                 eventsDB.getEventsOrTasksWithIds(it).filter { it.isDavTask() }
@@ -404,6 +405,20 @@ class EventsHelper(val context: Context) {
         if (childIds.isNotEmpty()) {
             deleteEvents(childIds, deleteFromCalDAV, updateWidgets)
         }
+    }
+
+    // tasks of read-only task lists can't be deleted, the sync adapter would restore them
+    private fun getIdsWithoutReadOnlyTasks(ids: List<Long>): List<Long> {
+        val readOnlyIds = ids.chunked(CHOPPED_LIST_DEFAULT_SIZE).flatMap { chunk ->
+            eventsDB.getEventsOrTasksWithIds(chunk)
+                .filter { context.davTasksHelper.isReadOnlyTask(it) }
+                .mapNotNull { it.id }
+        }.toSet()
+
+        if (readOnlyIds.isNotEmpty()) {
+            context.toast(R.string.insufficient_permissions)
+        }
+        return ids.filter { it !in readOnlyIds }
     }
 
     private fun deleteEventsAndTasksWithCalendarId(calendarId: Long) {

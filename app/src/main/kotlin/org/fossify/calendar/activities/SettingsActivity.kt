@@ -448,7 +448,8 @@ class SettingsActivity : SimpleActivity() {
                 }
 
                 if (newCalendarIds.isNotEmpty()) {
-                    val existingCalendarNames = eventsHelper.getCalendarsSync().map {
+                    // a task list can have the same name as the calendar of the same collection
+                    val existingCalendarNames = eventsHelper.getCalendarsSync().filter { !it.isDavTaskList() }.map {
                         it.getDisplayTitle().lowercase(Locale.getDefault())
                     } as ArrayList<String>
 

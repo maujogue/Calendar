@@ -15,10 +15,13 @@ interface CalendarsDao {
     @Query("SELECT * FROM event_types WHERE id = :id")
     fun getCalendarWithId(id: Long): CalendarEntity?
 
-    @Query("SELECT id FROM event_types WHERE title = :title COLLATE NOCASE")
+    @Query("SELECT id FROM event_types WHERE title = :title COLLATE NOCASE AND dav_task_list_id = 0")
     fun getCalendarIdWithTitle(title: String): Long?
 
-    @Query("SELECT id FROM event_types WHERE title = :title AND caldav_calendar_id = 0 COLLATE NOCASE")
+    @Query(
+        "SELECT id FROM event_types WHERE title = :title AND dav_task_list_id = 0 " +
+            "AND caldav_calendar_id = 0 COLLATE NOCASE"
+    )
     fun getLocalCalendarIdWithTitle(title: String): Long?
 
     @Query("SELECT id FROM event_types WHERE type = :classId")

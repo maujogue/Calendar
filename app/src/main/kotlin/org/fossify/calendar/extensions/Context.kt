@@ -903,7 +903,18 @@ fun Context.getEventListItems(
     return listItems
 }
 
-fun Context.handleEventDeleting(eventIds: List<Long>, timestamps: List<Long>, action: Int) {
+fun Context.handleEventDeleting(allEventIds: List<Long>, allTimestamps: List<Long>, action: Int) {
+    // tasks of read-only task lists can't be deleted
+    val writableIndexes = allEventIds.indices.filter { index ->
+        val task = eventsDB.getTaskWithId(allEventIds[index])
+        task == null || !davTasksHelper.isReadOnlyTask(task)
+    }
+    if (writableIndexes.size < allEventIds.size) {
+        toast(R.string.insufficient_permissions)
+    }
+
+    val eventIds = writableIndexes.map { allEventIds[it] }
+    val timestamps = writableIndexes.map { allTimestamps[it] }
     when (action) {
         DELETE_SELECTED_OCCURRENCE -> {
             eventIds.forEachIndexed { index, value ->
@@ -1084,6 +1095,12 @@ fun Context.isTaskCompleted(event: Event): Boolean {
 }
 
 fun Context.updateTaskCompletion(event: Event, completed: Boolean, pushToProvider: Boolean = true) {
+    // the completion of recurring tasks stays local, other changes in read-only task lists would be reverted
+    if (pushToProvider && event.repeatInterval == 0 && davTasksHelper.isReadOnlyTask(event)) {
+        toast(R.string.insufficient_permissions)
+        return
+    }
+
     if (completed) {
         event.flags = event.flags or FLAG_TASK_COMPLETED
         val task = Task(null, event.id!!, event.startTS, event.flags)

@@ -10,9 +10,11 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteQueryBuilder
 import android.net.Uri
+import android.os.Build
 import org.fossify.calendar.helpers.DavTasksHelper
 import org.fossify.calendar.providers.TasksContract.Properties
 import org.fossify.calendar.providers.TasksContract.Relation
+import org.fossify.calendar.providers.TasksContract.TaskLists
 import org.fossify.calendar.providers.TasksContract.Tasks
 import org.fossify.calendar.providers.TasksDatabaseHelper.Companion.LIST_COLUMNS
 import org.fossify.calendar.providers.TasksDatabaseHelper.Companion.PROPERTY_COLUMNS
@@ -51,6 +53,17 @@ class TasksProvider : ContentProvider() {
 
         private const val TASKS_WITH_PROPERTIES = "$TABLE_TASKS LEFT OUTER JOIN $TABLE_PROPERTIES " +
             "ON ($TABLE_PROPERTIES.${Properties.TASK_ID} = $TABLE_TASKS.${TasksContract._ID})"
+
+        // only plain columns can be queried, no SQL expressions
+        private val LISTS_PROJECTION = LIST_COLUMNS.associateWith { it }
+        private val TASKS_PROJECTION = TASK_COLUMNS.associateWith { it }
+        private val PROPERTIES_PROJECTION = PROPERTY_COLUMNS.associateWith { it }
+        private val TASKS_WITH_PROPERTIES_PROJECTION =
+            TASK_COLUMNS.associateWith { "$TABLE_TASKS.$it AS $it" } +
+                PROPERTY_COLUMNS.associateWith { "$TABLE_PROPERTIES.$it AS $it" }
+
+        // other apps can only show or hide task lists, like in OpenTasks
+        private val LIST_COLUMNS_FOR_APPS = setOf(TaskLists.VISIBLE, TaskLists.SYNC_ENABLED)
     }
 
     private lateinit var dbHelper: TasksDatabaseHelper
@@ -93,20 +106,32 @@ class TasksProvider : ContentProvider() {
         when (uriMatcher.match(uri)) {
             LISTS, LIST_ID -> {
                 builder.tables = TABLE_LISTS
+                builder.projectionMap = LISTS_PROJECTION
                 addListAccountFilter(uri, where, args, TasksContract._ID)
             }
 
             TASKS, TASK_ID -> {
-                builder.tables = if (uri.getQueryParameter(TasksContract.LOAD_PROPERTIES) != null) {
-                    TASKS_WITH_PROPERTIES
+                if (uri.getQueryParameter(TasksContract.LOAD_PROPERTIES) != null) {
+                    builder.tables = TASKS_WITH_PROPERTIES
+                    builder.projectionMap = TASKS_WITH_PROPERTIES_PROJECTION
                 } else {
-                    TABLE_TASKS
+                    builder.tables = TABLE_TASKS
+                    builder.projectionMap = TASKS_PROJECTION
                 }
                 addListAccountFilter(uri, where, args, Tasks.LIST_ID)
             }
 
-            PROPERTIES, PROPERTY_ID -> builder.tables = TABLE_PROPERTIES
+            PROPERTIES, PROPERTY_ID -> {
+                builder.tables = TABLE_PROPERTIES
+                builder.projectionMap = PROPERTIES_PROJECTION
+            }
+
             else -> throw IllegalArgumentException("Unknown uri $uri")
+        }
+
+        builder.setStrict(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.setStrictColumns(true)
         }
 
         addIdFilter(uri, where, args)
@@ -189,18 +214,12 @@ class TasksProvider : ContentProvider() {
 
         val count = when (uriMatcher.match(uri)) {
             LISTS, LIST_ID -> {
-                val listValues = filterValues(values, LIST_COLUMNS)
+                val listValues = filterValues(values, if (isSyncAdapter) LIST_COLUMNS else LIST_COLUMNS_FOR_APPS)
                 if (listValues.size() == 0) 0 else db.update(TABLE_LISTS, listValues, finalSelection, finalArgs)
             }
 
             TASKS, TASK_ID -> {
-                // DAVx⁵ renames accounts by updating account_name through the tasks uri, apply it to the task lists
-                var renamedLists = 0
-                values?.getAsString(TasksContract.ACCOUNT_NAME)?.let { newName ->
-                    val listValues = ContentValues().apply { put(TasksContract.ACCOUNT_NAME, newName) }
-                    val listSelection = selection?.takeIf { it.isNotBlank() } ?: "1"
-                    renamedLists = db.update(TABLE_LISTS, listValues, listSelection, selectionArgs)
-                }
+                val renamedLists = renameAccount(db, uri, values, selection, selectionArgs)
 
                 val taskValues = filterValues(values, TASK_COLUMNS)
                 if (taskValues.size() == 0) {
@@ -231,6 +250,28 @@ class TasksProvider : ContentProvider() {
             onChange(isSyncAdapter, relationsChanged)
         }
         return count
+    }
+
+    // DAVx⁵ renames accounts by updating account_name through the tasks uri,
+    // with "account_name = <old name>" as selection. Apply it to the task lists
+    private fun renameAccount(
+        db: SQLiteDatabase,
+        uri: Uri,
+        values: ContentValues?,
+        selection: String?,
+        selectionArgs: Array<out String>?
+    ): Int {
+        val newAccountName = values?.getAsString(TasksContract.ACCOUNT_NAME)
+        if (newAccountName == null || uriMatcher.match(uri) != TASKS || selection.isNullOrBlank()) {
+            return 0
+        }
+
+        val listValues = ContentValues().apply { put(TasksContract.ACCOUNT_NAME, newAccountName) }
+        val renamedLists = db.update(TABLE_LISTS, listValues, selection, selectionArgs)
+        if (renamedLists > 0) {
+            DavTasksHelper.schedulePull(context!!)
+        }
+        return renamedLists
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
