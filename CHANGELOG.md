@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Added support for CalDAV tasks (requires a DAVx⁵ version with Fossify Calendar support) ([#36])
 
 ## [1.12.0] - 2026-10-10
 ### Added
@@ -230,6 +232,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [#15]: https://github.com/FossifyOrg/Calendar/issues/15
 [#34]: https://github.com/FossifyOrg/Calendar/issues/34
+[#36]: https://github.com/FossifyOrg/Calendar/issues/36
 [#45]: https://github.com/FossifyOrg/Calendar/issues/45
 [#49]: https://github.com/FossifyOrg/Calendar/issues/49
 [#63]: https://github.com/FossifyOrg/Calendar/issues/63
