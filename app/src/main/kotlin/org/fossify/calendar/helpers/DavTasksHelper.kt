@@ -43,6 +43,7 @@ class DavTasksHelper(val context: Context) {
     companion object {
         private const val PULL_DELAY_MS = 1000L
         private const val EXDATE_PATTERN = "yyyyMMdd'T'HHmmss"
+        private const val EXDATE_UTC_PATTERN = "yyyyMMdd'T'HHmmss'Z'"
         private const val DAY_CODE_LENGTH = 8
         private const val MINUTE_MS = 60_000L
         private const val PERCENT_COMPLETED = 100
@@ -259,6 +260,8 @@ class DavTasksHelper(val context: Context) {
         val timeZone = cursor.string(Tasks.TZ)?.takeIf { it.isNotEmpty() } ?: DateTimeZone.getDefault().id
 
         val startTS = anchorMs / 1000L
+        // recurrences follow DTSTART, while the app shows each occurrence at its due date
+        val recurrenceOffset = if (due != null && dtstart != null) (due - dtstart) / 1000L else 0L
         val localStartTS = if (isAllDay) Formatter.getShiftedLocalTS(startTS) else startTS
         val repetition = Parser().parseRepeatInterval(cursor.string(Tasks.RRULE) ?: "", localStartTS)
 
@@ -296,7 +299,7 @@ class DavTasksHelper(val context: Context) {
             repetitionExceptions = if (repetition.repeatInterval == 0) {
                 emptyList()
             } else {
-                parseExdates(cursor.string(Tasks.EXDATE), isAllDay, timeZone)
+                parseExdates(cursor.string(Tasks.EXDATE), isAllDay, timeZone, recurrenceOffset)
             },
             importId = getImportId(list.id, remoteId),
             timeZone = timeZone,
@@ -335,8 +338,15 @@ class DavTasksHelper(val context: Context) {
     }
 
     // exdates are stored as "yyyyMMdd" for all-day tasks,
-    // else as "yyyyMMddTHHmmss" in the task time zone or in UTC with a "Z" suffix
-    private fun parseExdates(exdate: String?, isAllDay: Boolean, timeZone: String): List<String> {
+    // else as "yyyyMMddTHHmmss" in the task time zone or in UTC with a "Z" suffix.
+    // They match DTSTART based instances, so [recurrenceOffset] (due - start, in seconds)
+    // maps them to the app's occurrences
+    private fun parseExdates(
+        exdate: String?,
+        isAllDay: Boolean,
+        timeZone: String,
+        recurrenceOffset: Long
+    ): List<String> {
         if (exdate.isNullOrBlank()) {
             return emptyList()
         }
@@ -351,7 +361,7 @@ class DavTasksHelper(val context: Context) {
                         val zone = if (value.endsWith("Z")) DateTimeZone.UTC else DateTimeZone.forID(timeZone)
                         val dateTime = DateTimeFormat.forPattern(EXDATE_PATTERN).withZone(zone)
                             .parseDateTime(value.removeSuffix("Z"))
-                        Formatter.getDayCodeFromTS(dateTime.millis / 1000L)
+                        Formatter.getDayCodeFromTS(dateTime.millis / 1000L + recurrenceOffset)
                     }
                 }
             } catch (_: Exception) {
@@ -360,21 +370,23 @@ class DavTasksHelper(val context: Context) {
         }.distinct()
     }
 
-    private fun formatExdates(task: Event): String? {
+    // date-times are written in UTC with a "Z" suffix, which DAVx⁵ parses whatever the task time zone is
+    // (floating values are rejected when the time zone is UTC)
+    private fun formatExdates(task: Event, recurrenceOffset: Long): String? {
         if (task.repeatInterval == 0 || task.repetitionExceptions.isEmpty()) {
             return null
         }
 
         val start = Formatter.getDateTimeFromTS(task.startTS)
-        val zone = DateTimeZone.forID(task.getTimeZoneString())
         return task.repetitionExceptions.joinToString(",") { dayCode ->
             if (task.getIsAllDay()) {
                 dayCode
             } else {
                 Formatter.getLocalDateTimeFromCode(dayCode)
                     .withTime(start.hourOfDay, start.minuteOfHour, start.secondOfMinute, 0)
-                    .withZone(zone)
-                    .toString(EXDATE_PATTERN)
+                    .minusSeconds(recurrenceOffset.toInt())
+                    .withZone(DateTimeZone.UTC)
+                    .toString(EXDATE_UTC_PATTERN)
             }
         }
     }
@@ -533,15 +545,8 @@ class DavTasksHelper(val context: Context) {
         val useDue = existing == null || existing.due != null || existing.dtstart == null
         if (useDue) {
             put(Tasks.DUE, timestamp)
-            val existingStart = existing?.dtstart
-            val existingDue = existing?.due
-            if (existing != null && existingStart != null && existingDue != null) {
-                if (existing.isAllDay != isAllDay) {
-                    putNull(Tasks.DTSTART)
-                } else {
-                    // keep the time span between start and due
-                    put(Tasks.DTSTART, existingStart + timestamp - existingDue)
-                }
+            if (existing != null) {
+                shiftStart(existing, timestamp, isAllDay)
             }
         } else {
             put(Tasks.DTSTART, timestamp)
@@ -553,7 +558,25 @@ class DavTasksHelper(val context: Context) {
             putNull(Tasks.EXDATE)
         } else {
             put(Tasks.RRULE, repeatRule)
-            put(Tasks.EXDATE, formatExdates(task))
+            put(Tasks.EXDATE, formatExdates(task, getRecurrenceOffset(existing, isAllDay)))
+        }
+    }
+
+    // the time span between start and due kept by [shiftStart], in seconds
+    private fun getRecurrenceOffset(existing: RemoteTimes?, isAllDay: Boolean): Long {
+        val existingStart = existing?.dtstart ?: return 0L
+        val existingDue = existing.due ?: return 0L
+        return if (existing.isAllDay == isAllDay) (existingDue - existingStart) / 1000L else 0L
+    }
+
+    private fun ContentValues.shiftStart(existing: RemoteTimes, newDue: Long, isAllDay: Boolean) {
+        val existingStart = existing.dtstart ?: return
+        val existingDue = existing.due ?: return
+        if (existing.isAllDay != isAllDay) {
+            putNull(Tasks.DTSTART)
+        } else {
+            // keep the time span between start and due
+            put(Tasks.DTSTART, existingStart + newDue - existingDue)
         }
     }
 

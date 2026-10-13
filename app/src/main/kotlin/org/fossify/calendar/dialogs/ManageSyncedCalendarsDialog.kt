@@ -97,13 +97,11 @@ class ManageSyncedCalendarsDialog(val activity: SimpleActivity, val callback: ()
         val childCnt = binding.dialogSelectCalendarsHolder.childCount
         for (i in 0..childCnt) {
             val child = binding.dialogSelectCalendarsHolder.getChildAt(i)
-            if (child is RelativeLayout) {
-                val check = child.getChildAt(0)
-                if (check is MyAppCompatCheckbox && check.isChecked) {
-                    when (val tag = check.tag) {
-                        is TaskListTag -> taskListIds.add(tag.id)
-                        is Int -> calendarIds.add(tag)
-                    }
+            val check = (child as? RelativeLayout)?.getChildAt(0)
+            if (check is MyAppCompatCheckbox && check.isChecked) {
+                when (val tag = check.tag) {
+                    is TaskListTag -> taskListIds.add(tag.id)
+                    is Int -> calendarIds.add(tag)
                 }
             }
         }

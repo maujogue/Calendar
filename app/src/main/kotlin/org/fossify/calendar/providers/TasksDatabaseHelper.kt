@@ -180,5 +180,7 @@ class TasksDatabaseHelper private constructor(context: Context) :
         db.execSQL("CREATE INDEX properties_task_id ON $TABLE_PROPERTIES (${Properties.TASK_ID})")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // there is only one version of the database so far
+    }
 }

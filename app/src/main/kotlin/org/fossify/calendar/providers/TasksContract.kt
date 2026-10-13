@@ -28,14 +28,22 @@ object TasksContract {
     fun isCallerSyncAdapter(uri: Uri) =
         uri.getBooleanQueryParameter(CALLER_IS_SYNCADAPTER, false)
 
-    // columns shared by task lists and tasks
+    private const val SYNC_COLUMN_COUNT = 8
+    private const val LAST_DATA_COLUMN = 15
+
+    // columns shared by task lists and tasks, named like in OpenTasks' TaskContract
+    @Suppress("ObjectPropertyNaming")
     const val _ID = "_id"
+    @Suppress("ObjectPropertyNaming")
     const val _SYNC_ID = "_sync_id"
     const val SYNC_VERSION = "sync_version"
+    @Suppress("ObjectPropertyNaming")
     const val _DIRTY = "_dirty"
+    @Suppress("ObjectPropertyNaming")
     const val _DELETED = "_deleted"
+    @Suppress("ObjectPropertyNaming")
     const val _UID = "_uid"
-    val SYNC_COLUMNS = (1..8).map { "sync$it" }
+    val SYNC_COLUMNS = (1..SYNC_COLUMN_COUNT).map { "sync$it" }
 
     object TaskLists {
         const val PATH = "tasklists"
@@ -102,8 +110,8 @@ object TasksContract {
         const val TASK_ID = "task_id"
         const val MIMETYPE = "mimetype"
         const val VERSION = "prop_version"
-        val DATA_COLUMNS = (0..15).map { "data$it" }
-        val SYNC_COLUMNS = (1..8).map { "prop_sync$it" }
+        val DATA_COLUMNS = (0..LAST_DATA_COLUMN).map { "data$it" }
+        val SYNC_COLUMNS = (1..SYNC_COLUMN_COUNT).map { "prop_sync$it" }
     }
 
     object Alarm {
