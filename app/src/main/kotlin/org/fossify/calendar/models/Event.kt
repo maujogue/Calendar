@@ -22,6 +22,7 @@ import org.fossify.calendar.helpers.REMINDER_OFF
 import org.fossify.calendar.helpers.REPEAT_ORDER_WEEKDAY
 import org.fossify.calendar.helpers.REPEAT_ORDER_WEEKDAY_USE_LAST
 import org.fossify.calendar.helpers.REPEAT_SAME_DAY
+import org.fossify.calendar.helpers.SOURCE_DAV_TASKS
 import org.fossify.calendar.helpers.SOURCE_SIMPLE_CALENDAR
 import org.fossify.calendar.helpers.TYPE_EVENT
 import org.fossify.calendar.helpers.TYPE_TASK
@@ -206,6 +207,11 @@ data class Event(
             0L
         }
     }
+
+    fun isDavTask() = isTask() && source.startsWith("$SOURCE_DAV_TASKS-")
+
+    fun getDavTaskListId() =
+        if (isDavTask()) source.substringAfterLast("-").toLongOrNull() ?: 0L else 0L
 
     fun getCalDAVCalendarId() =
         if (source.startsWith(CALDAV)) (source.split("-").lastOrNull() ?: "0").toString()

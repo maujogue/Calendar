@@ -14,10 +14,14 @@ data class CalendarEntity(
     @ColumnInfo(name = "caldav_calendar_id") var caldavCalendarId: Int = 0,
     @ColumnInfo(name = "caldav_display_name") var caldavDisplayName: String = "",
     @ColumnInfo(name = "caldav_email") var caldavEmail: String = "",
-    @ColumnInfo(name = "type") var type: Int = OTHER_EVENT
+    @ColumnInfo(name = "type") var type: Int = OTHER_EVENT,
+    @ColumnInfo(name = "dav_task_list_id") var davTaskListId: Long = 0L
 ) {
     fun getDisplayTitle() =
-        if (caldavCalendarId == 0) title else "$caldavDisplayName ($caldavEmail)"
+        if (caldavCalendarId == 0 && davTaskListId == 0L) title else "$caldavDisplayName ($caldavEmail)"
 
     fun isSyncedCalendar() = caldavCalendarId != 0
+
+    // a CalDAV task list synced through the app's own tasks provider, it holds tasks only
+    fun isDavTaskList() = davTaskListId != 0L
 }

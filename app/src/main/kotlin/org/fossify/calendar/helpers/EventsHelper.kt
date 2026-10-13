@@ -7,6 +7,7 @@ import androidx.annotation.ColorRes
 import androidx.collection.LongSparseArray
 import org.fossify.calendar.R
 import org.fossify.calendar.extensions.calDAVHelper
+import org.fossify.calendar.extensions.davTasksHelper
 import org.fossify.calendar.extensions.calendarsDB
 import org.fossify.calendar.extensions.cancelNotification
 import org.fossify.calendar.extensions.cancelPendingIntent
@@ -114,7 +115,7 @@ class EventsHelper(val context: Context) {
         synchronized(HolidayHelper.lock) {
             val typesToDelete = calendars
                 .asSequence()
-                .filter { it.caldavCalendarId == 0 && it.id != LOCAL_CALENDAR_ID }
+                .filter { it.caldavCalendarId == 0 && !it.isDavTaskList() && it.id != LOCAL_CALENDAR_ID }
                 .toMutableList()
             val deleteIds = typesToDelete.map { it.id }.toMutableList()
             val deletedSet = deleteIds.map { it.toString() }.toHashSet()
@@ -161,7 +162,10 @@ class EventsHelper(val context: Context) {
         if (updateWidgets) context.updateWidgets()
         context.scheduleNextEventReminder(event, showToasts)
 
-        if (addToCalDAV && config.caldavSync && event.source != SOURCE_SIMPLE_CALENDAR && event.source != SOURCE_IMPORTED_ICS) {
+        if (
+            addToCalDAV && config.caldavSync && !event.isTask() &&
+            event.source != SOURCE_SIMPLE_CALENDAR && event.source != SOURCE_IMPORTED_ICS
+        ) {
             context.calDAVHelper.insertCalDAVEvent(event, eventOccurrenceTS)
         }
 
@@ -172,12 +176,16 @@ class EventsHelper(val context: Context) {
         task: Event,
         showToasts: Boolean,
         enableCalendar: Boolean = true,
+        addToCalDAV: Boolean = true,
         callback: () -> Unit
     ) {
         task.id = eventsDB.insertOrUpdate(task)
         ensureCalendarVisibility(task, enableCalendar)
         context.updateWidgets()
         context.scheduleNextEventReminder(task, showToasts)
+        if (addToCalDAV) {
+            context.davTasksHelper.insertTask(task)
+        }
         callback()
     }
 
@@ -220,7 +228,9 @@ class EventsHelper(val context: Context) {
         ensureCalendarVisibility(event, enableCalendar)
         if (updateWidgets) context.updateWidgets()
         context.scheduleNextEventReminder(event, showToasts)
-        if (updateAtCalDAV && event.source != SOURCE_SIMPLE_CALENDAR && config.caldavSync) {
+        if (updateAtCalDAV && event.isTask()) {
+            context.davTasksHelper.updateTask(event)
+        } else if (updateAtCalDAV && event.source != SOURCE_SIMPLE_CALENDAR && config.caldavSync) {
             context.calDAVHelper.updateCalDAVEvent(event)
         }
         callback?.invoke()
@@ -254,6 +264,9 @@ class EventsHelper(val context: Context) {
                 originalEvent.id!!
             )
             context.scheduleNextEventReminder(originalEvent, false)
+            if (originalEvent.isDavTask()) {
+                context.davTasksHelper.updateTask(originalEvent)
+            }
 
             event.apply {
                 parentId = id!!
@@ -315,7 +328,7 @@ class EventsHelper(val context: Context) {
             applyOriginalStartEndTimes(event, originalStartTS, originalEndTS)
             updateEvent(
                 event,
-                updateAtCalDAV = !event.isTask(),
+                updateAtCalDAV = true,
                 showToasts = showToasts,
                 callback = callback
             )
@@ -354,6 +367,11 @@ class EventsHelper(val context: Context) {
 
         ids.chunked(CHOPPED_LIST_DEFAULT_SIZE).forEach {
             val eventsWithImportId = eventsDB.getEventsByIdsWithImportIds(it)
+            val davTasks = if (deleteFromCalDAV) {
+                eventsDB.getEventsOrTasksWithIds(it).filter { it.isDavTask() }
+            } else {
+                emptyList()
+            }
             eventsDB.deleteEvents(it)
 
             it.forEach {
@@ -365,6 +383,10 @@ class EventsHelper(val context: Context) {
                 eventsWithImportId.forEach {
                     context.calDAVHelper.deleteCalDAVEvent(it)
                 }
+            }
+
+            davTasks.forEach {
+                context.davTasksHelper.deleteTask(it)
             }
 
             deleteChildEvents(it as MutableList<Long>, deleteFromCalDAV, updateWidgets)
@@ -412,6 +434,9 @@ class EventsHelper(val context: Context) {
 
         if (event.isTask()) {
             completedTasksDB.deleteTaskFutureOccurrences(eventId, occurrenceTS)
+            if (event.isDavTask()) {
+                eventsDB.getTaskWithId(eventId)?.let { context.davTasksHelper.updateTask(it) }
+            }
         }
     }
 
@@ -441,7 +466,9 @@ class EventsHelper(val context: Context) {
             )
             context.scheduleNextEventReminder(parentEvent, false)
 
-            if (addToCalDAV && config.caldavSync) {
+            if (addToCalDAV && parentEvent.isDavTask()) {
+                context.davTasksHelper.updateTask(parentEvent)
+            } else if (addToCalDAV && config.caldavSync && !parentEvent.isTask()) {
                 context.calDAVHelper.insertEventRepeatException(parentEvent, occurrenceTS)
             }
 

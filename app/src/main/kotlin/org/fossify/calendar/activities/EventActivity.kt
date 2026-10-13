@@ -411,7 +411,7 @@ class EventActivity : SimpleActivity() {
         localCalendar: CalendarEntity?,
         event: Event?,
     ) = binding.apply {
-        if (localCalendar == null || localCalendar.caldavCalendarId != 0) {
+        if (localCalendar == null || localCalendar.caldavCalendarId != 0 || localCalendar.isDavTaskList()) {
             config.lastUsedLocalCalendarId = LOCAL_CALENDAR_ID
         }
 
@@ -772,7 +772,7 @@ class EventActivity : SimpleActivity() {
             mEventCalendarId = selectedCaldavId
         } else {
             mEventCalendarId = STORED_LOCALLY_ONLY
-            if (selectedCalendar == null || selectedCalendar.caldavCalendarId != 0) {
+            if (selectedCalendar == null || selectedCalendar.isSyncedCalendar() || selectedCalendar.isDavTaskList()) {
                 mCalendarId = config.lastUsedLocalCalendarId
             }
         }

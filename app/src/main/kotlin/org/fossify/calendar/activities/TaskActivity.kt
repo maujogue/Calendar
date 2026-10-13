@@ -330,7 +330,7 @@ class TaskActivity : SimpleActivity() {
         localCalendar: CalendarEntity?,
         task: Event?
     ) {
-        if (localCalendar == null || localCalendar.caldavCalendarId != 0) {
+        if (localCalendar == null || localCalendar.isSyncedCalendar()) {
             config.lastUsedLocalCalendarId = LOCAL_CALENDAR_ID
         }
 
@@ -385,7 +385,7 @@ class TaskActivity : SimpleActivity() {
             config.lastUsedLocalCalendarId
         } else {
             val defaultCalendar = storedCalendars.firstOrNull { it.id == config.defaultCalendarId }
-            if (defaultCalendar?.caldavCalendarId == 0) {
+            if (defaultCalendar != null && !defaultCalendar.isSyncedCalendar()) {
                 config.defaultCalendarId
             } else {
                 config.lastUsedLocalCalendarId
@@ -606,7 +606,7 @@ class TaskActivity : SimpleActivity() {
                 }
             } else {
                 hideKeyboard()
-                eventsHelper.updateEvent(mTask, updateAtCalDAV = false, showToasts = true) {
+                eventsHelper.updateEvent(mTask, updateAtCalDAV = true, showToasts = true) {
                     finish()
                 }
             }
@@ -656,7 +656,7 @@ class TaskActivity : SimpleActivity() {
                     DELETE_SELECTED_OCCURRENCE -> eventsHelper.deleteRepeatingEventOccurrence(
                         parentEventId = mTask.id!!,
                         occurrenceTS = mTaskOccurrenceTS,
-                        addToCalDAV = false
+                        addToCalDAV = true
                     )
 
                     DELETE_FUTURE_OCCURRENCES -> eventsHelper.addEventRepeatLimit(
@@ -666,7 +666,7 @@ class TaskActivity : SimpleActivity() {
 
                     DELETE_ALL_OCCURRENCES -> eventsHelper.deleteEvent(
                         id = mTask.id!!,
-                        deleteFromCalDAV = false
+                        deleteFromCalDAV = true
                     )
                 }
 
@@ -925,7 +925,8 @@ class TaskActivity : SimpleActivity() {
             showNewCalendarOption = false,
             addLastUsedOneAsFirstOption = false,
             showOnlyWritable = true,
-            showManageCalendars = true
+            showManageCalendars = true,
+            showTaskLists = true
         ) {
             mCalendarId = it.id!!
             updateCalendar()
@@ -938,7 +939,11 @@ class TaskActivity : SimpleActivity() {
             if (calendar != null) {
                 runOnUiThread {
                     binding.calendarTitle.text = calendar.title
-                    binding.calendarSubtitle.text = getString(R.string.offline_never_synced)
+                    binding.calendarSubtitle.text = if (calendar.isDavTaskList()) {
+                        calendar.caldavEmail
+                    } else {
+                        getString(R.string.offline_never_synced)
+                    }
                     updateTaskColorInfo(calendar.color)
                 }
             }

@@ -10,6 +10,7 @@ import org.fossify.calendar.R
 import org.fossify.calendar.extensions.config
 import org.fossify.calendar.extensions.getAlarmManager
 import org.fossify.calendar.extensions.refreshCalDAVCalendars
+import org.fossify.calendar.providers.TasksContract
 import org.fossify.commons.activities.BaseSimpleActivity
 import org.fossify.commons.dialogs.ConfirmationDialog
 import org.fossify.commons.dialogs.PermissionRequiredDialog
@@ -56,6 +57,7 @@ open class SimpleActivity : BaseSimpleActivity() {
             val uri = CalendarContract.Calendars.CONTENT_URI
             contentResolver.unregisterContentObserver(calDAVSyncObserver)
             contentResolver.registerContentObserver(uri, false, calDAVSyncObserver)
+            contentResolver.registerContentObserver(TasksContract.getContentUri(), true, calDAVSyncObserver)
             refreshCalDAVCalendars(config.caldavSyncedCalendarIds, true)
         }
     }

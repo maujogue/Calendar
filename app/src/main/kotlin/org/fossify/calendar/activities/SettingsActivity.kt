@@ -17,6 +17,7 @@ import org.fossify.calendar.dialogs.ManageSyncedCalendarsDialog
 import org.fossify.calendar.dialogs.SelectCalendarDialog
 import org.fossify.calendar.dialogs.SelectCalendarsDialog
 import org.fossify.calendar.extensions.calDAVHelper
+import org.fossify.calendar.extensions.davTasksHelper
 import org.fossify.calendar.extensions.calendarsDB
 import org.fossify.calendar.extensions.cancelScheduledAutomaticBackup
 import org.fossify.calendar.extensions.config
@@ -286,8 +287,9 @@ class SettingsActivity : SimpleActivity() {
         if (getProperPrimaryColor() != mStoredPrimaryColor) {
             ensureBackgroundThread {
                 val calendars = eventsHelper.getCalendarsSync()
-                if (calendars.filter { it.caldavCalendarId == 0 }.size == 1) {
-                    val calendar = calendars.first { it.caldavCalendarId == 0 }
+                val localCalendars = calendars.filter { it.caldavCalendarId == 0 && !it.isDavTaskList() }
+                if (localCalendars.size == 1) {
+                    val calendar = localCalendars.first()
                     calendar.color = getProperPrimaryColor()
                     eventsHelper.insertOrUpdateCalendarSync(calendar)
                 }
@@ -411,6 +413,7 @@ class SettingsActivity : SimpleActivity() {
                     calDAVHelper.deleteCalDAVCalendarEvents(it.toLong())
                 }
                 calendarsDB.deleteCalendarsWithCalendarIds(config.getSyncedCalendarIdsAsList())
+                davTasksHelper.removeLocalTaskLists(config.getSyncedTaskListIdsAsList())
                 updateDefaultCalendarText()
             }
         }
@@ -418,22 +421,32 @@ class SettingsActivity : SimpleActivity() {
 
     private fun showCalendarPicker() = binding.apply {
         val oldCalendarIds = config.getSyncedCalendarIdsAsList()
+        val oldTaskListIds = config.getSyncedTaskListIdsAsList()
 
         ManageSyncedCalendarsDialog(this@SettingsActivity) {
             val newCalendarIds = config.getSyncedCalendarIdsAsList()
-            if (newCalendarIds.isEmpty() && !config.caldavSync) {
+            val newTaskListIds = config.getSyncedTaskListIdsAsList()
+            val isAnythingSynced = newCalendarIds.isNotEmpty() || newTaskListIds.isNotEmpty()
+            if (!isAnythingSynced && !config.caldavSync) {
                 return@ManageSyncedCalendarsDialog
             }
 
-            settingsManageSyncedCalendarsHolder.beVisibleIf(newCalendarIds.isNotEmpty())
-            settingsCaldavPullToRefreshHolder.beVisibleIf(newCalendarIds.isNotEmpty())
-            settingsCaldavSync.isChecked = newCalendarIds.isNotEmpty()
-            config.caldavSync = newCalendarIds.isNotEmpty()
+            settingsManageSyncedCalendarsHolder.beVisibleIf(isAnythingSynced)
+            settingsCaldavPullToRefreshHolder.beVisibleIf(isAnythingSynced)
+            settingsCaldavSync.isChecked = isAnythingSynced
+            config.caldavSync = isAnythingSynced
             if (settingsCaldavSync.isChecked) {
                 toast(R.string.syncing)
             }
 
             ensureBackgroundThread {
+                val removedTaskListIds = oldTaskListIds.filter { !newTaskListIds.contains(it) }
+                davTasksHelper.removeLocalTaskLists(removedTaskListIds)
+                if (newTaskListIds.isNotEmpty()) {
+                    davTasksHelper.refreshTaskLists()
+                    davTasksHelper.requestSync(manual = true)
+                }
+
                 if (newCalendarIds.isNotEmpty()) {
                     val existingCalendarNames = eventsHelper.getCalendarsSync().map {
                         it.getDisplayTitle().lowercase(Locale.getDefault())

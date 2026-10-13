@@ -9,6 +9,7 @@ import org.fossify.calendar.databinding.CalendarItemCalendarBinding
 import org.fossify.calendar.databinding.DialogSelectCalendarsBinding
 import org.fossify.calendar.extensions.calDAVHelper
 import org.fossify.calendar.extensions.config
+import org.fossify.calendar.extensions.davTasksHelper
 import org.fossify.commons.extensions.beVisibleIf
 import org.fossify.commons.extensions.getAlertDialogBuilder
 import org.fossify.commons.extensions.setupDialogStuff
@@ -16,25 +17,38 @@ import org.fossify.commons.extensions.viewBinding
 import org.fossify.commons.views.MyAppCompatCheckbox
 
 class ManageSyncedCalendarsDialog(val activity: SimpleActivity, val callback: () -> Unit) {
+    // CalDAV task lists are tagged with this wrapper to tell them apart from calendar ids
+    private data class TaskListTag(val id: Long)
+
     private var prevAccount = ""
     private val binding by activity.viewBinding(DialogSelectCalendarsBinding::inflate)
 
     init {
         val ids = activity.config.getSyncedCalendarIdsAsList()
+        val taskListIds = activity.config.getSyncedTaskListIdsAsList()
         val calendars = activity.calDAVHelper.getCalDAVCalendars("", true)
+        val taskLists = activity.davTasksHelper.getTaskLists()
+        val isEmpty = calendars.isEmpty() && taskLists.isEmpty()
         binding.apply {
-            dialogSelectCalendarsPlaceholder.beVisibleIf(calendars.isEmpty())
-            dialogSelectCalendarsHolder.beVisibleIf(calendars.isNotEmpty())
+            dialogSelectCalendarsPlaceholder.beVisibleIf(isEmpty)
+            dialogSelectCalendarsHolder.beVisibleIf(!isEmpty)
         }
 
-        val sorted = calendars.sortedWith(compareBy({ it.accountName }, { it.displayName }))
-        sorted.forEach {
-            if (prevAccount != it.accountName) {
-                prevAccount = it.accountName
-                addCalendarItem(false, it.accountName)
+        val accounts = (calendars.map { it.accountName } + taskLists.map { it.accountName }).distinct().sorted()
+        accounts.forEach { account ->
+            if (prevAccount != account) {
+                prevAccount = account
+                addCalendarItem(false, account)
             }
 
-            addCalendarItem(true, it.displayName, it.id, ids.contains(it.id))
+            calendars.filter { it.accountName == account }.sortedBy { it.displayName }.forEach {
+                addCalendarItem(true, it.displayName, it.id, ids.contains(it.id))
+            }
+
+            taskLists.filter { it.accountName == account }.sortedBy { it.displayName }.forEach {
+                val title = activity.getString(R.string.caldav_task_list, it.displayName)
+                addCalendarItem(true, title, TaskListTag(it.id), taskListIds.contains(it.id))
+            }
         }
 
         activity.getAlertDialogBuilder()
@@ -48,7 +62,7 @@ class ManageSyncedCalendarsDialog(val activity: SimpleActivity, val callback: ()
     private fun addCalendarItem(
         isEvent: Boolean,
         text: String,
-        tag: Int = 0,
+        tag: Any = 0,
         shouldCheck: Boolean = false
     ) {
         val itemBinding = if (isEvent) {
@@ -79,18 +93,23 @@ class ManageSyncedCalendarsDialog(val activity: SimpleActivity, val callback: ()
 
     private fun confirmSelection() {
         val calendarIds = ArrayList<Int>()
+        val taskListIds = ArrayList<Long>()
         val childCnt = binding.dialogSelectCalendarsHolder.childCount
         for (i in 0..childCnt) {
             val child = binding.dialogSelectCalendarsHolder.getChildAt(i)
             if (child is RelativeLayout) {
                 val check = child.getChildAt(0)
                 if (check is MyAppCompatCheckbox && check.isChecked) {
-                    calendarIds.add(check.tag as Int)
+                    when (val tag = check.tag) {
+                        is TaskListTag -> taskListIds.add(tag.id)
+                        is Int -> calendarIds.add(tag)
+                    }
                 }
             }
         }
 
         activity.config.caldavSyncedCalendarIds = TextUtils.join(",", calendarIds)
+        activity.config.davSyncedTaskListIds = TextUtils.join(",", taskListIds)
         callback()
     }
 }

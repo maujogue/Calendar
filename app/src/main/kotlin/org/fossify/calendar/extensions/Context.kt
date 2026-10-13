@@ -38,6 +38,7 @@ import org.fossify.calendar.databinding.DayMonthlyEventViewBinding
 import org.fossify.calendar.helpers.ACTION_MARK_COMPLETED
 import org.fossify.calendar.helpers.AUTOMATIC_BACKUP_REQUEST_CODE
 import org.fossify.calendar.helpers.CalDAVHelper
+import org.fossify.calendar.helpers.DavTasksHelper
 import org.fossify.calendar.helpers.Config
 import org.fossify.calendar.helpers.DAY
 import org.fossify.calendar.helpers.DEFAULT_START_TIME_CURRENT_TIME
@@ -140,6 +141,7 @@ val Context.completedTasksDB: TasksDao
     get() = EventsDatabase.getInstance(applicationContext).TasksDao()
 val Context.eventsHelper: EventsHelper get() = EventsHelper(this)
 val Context.calDAVHelper: CalDAVHelper get() = CalDAVHelper(this)
+val Context.davTasksHelper: DavTasksHelper get() = DavTasksHelper(this)
 
 fun Context.updateWidgets() {
     val widgetIDs = AppWidgetManager.getInstance(applicationContext)
@@ -746,6 +748,7 @@ fun Context.getSyncedCalDAVCalendars() =
 fun Context.recheckCalDAVCalendars(scheduleNextCalDAVSync: Boolean, callback: () -> Unit) {
     if (config.caldavSync) {
         ensureBackgroundThread {
+            davTasksHelper.refreshTaskLists()
             calDAVHelper.refreshCalendars(false, scheduleNextCalDAVSync, callback)
             updateWidgets()
         }
@@ -938,6 +941,10 @@ fun Context.refreshCalDAVCalendars(ids: String, showToasts: Boolean) {
             ContentResolver.requestSync(it, uri.authority, this)
         }
     }
+
+    if (config.getSyncedTaskListIdsAsList().isNotEmpty()) {
+        davTasksHelper.requestSync(manual = showToasts)
+    }
 }
 
 fun Context.getWidgetFontSize() = when (config.fontSize) {
@@ -1076,7 +1083,7 @@ fun Context.isTaskCompleted(event: Event): Boolean {
     return originalEvent?.isTaskCompleted() == true || task?.isTaskCompleted() == true
 }
 
-fun Context.updateTaskCompletion(event: Event, completed: Boolean) {
+fun Context.updateTaskCompletion(event: Event, completed: Boolean, pushToProvider: Boolean = true) {
     if (completed) {
         event.flags = event.flags or FLAG_TASK_COMPLETED
         val task = Task(null, event.id!!, event.startTS, event.flags)
@@ -1093,6 +1100,10 @@ fun Context.updateTaskCompletion(event: Event, completed: Boolean) {
 
     // mark event as "incomplete" in the main events db
     eventsDB.updateTaskCompletion(event.id!!, event.flags.removeBit(FLAG_TASK_COMPLETED))
+
+    if (pushToProvider && event.isDavTask()) {
+        davTasksHelper.updateTaskCompletion(event, completed)
+    }
 }
 
 // same as Context.queryCursor but inlined to allow non-local returns

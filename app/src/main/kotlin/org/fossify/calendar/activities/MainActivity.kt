@@ -24,6 +24,7 @@ import org.fossify.calendar.dialogs.SelectCalendarsDialog
 import org.fossify.calendar.dialogs.SetRemindersDialog
 import org.fossify.calendar.extensions.addImportIdsToTasks
 import org.fossify.calendar.extensions.calDAVHelper
+import org.fossify.calendar.extensions.davTasksHelper
 import org.fossify.calendar.extensions.config
 import org.fossify.calendar.extensions.eventsDB
 import org.fossify.calendar.extensions.eventsHelper
@@ -653,6 +654,7 @@ class MainActivity : SimpleActivity(), RefreshRecyclerViewListener {
 
     private fun updateCalDAVEvents() {
         ensureBackgroundThread {
+            davTasksHelper.refreshTaskLists()
             calDAVHelper.refreshCalendars(showToasts = false, scheduleNextSync = true) {
                 refreshViewPager()
             }
@@ -666,6 +668,7 @@ class MainActivity : SimpleActivity(), RefreshRecyclerViewListener {
         }
         updateCalDAVEvents()
         syncCalDAVCalendars {
+            davTasksHelper.refreshTaskLists()
             calDAVHelper.refreshCalendars(showToasts = true, scheduleNextSync = true) {
                 calDAVChanged()
             }

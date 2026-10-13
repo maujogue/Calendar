@@ -33,7 +33,8 @@ class ImportEventsDialog(
 
     init {
         ensureBackgroundThread {
-            if (activity.calendarsDB.getCalendarWithId(config.lastUsedLocalCalendarId) == null) {
+            val lastUsedCalendar = activity.calendarsDB.getCalendarWithId(config.lastUsedLocalCalendarId)
+            if (lastUsedCalendar == null || lastUsedCalendar.isDavTaskList()) {
                 config.lastUsedLocalCalendarId = LOCAL_CALENDAR_ID
             }
 

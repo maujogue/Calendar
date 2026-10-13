@@ -3,6 +3,19 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="auto">
 
+    <!-- protect the CalDAV tasks provider, sync adapters like DAVx⁵ request these at runtime -->
+    <permission
+        android:name="${applicationId}.permission.READ_TASKS"
+        android:description="@string/tasks_permission_description"
+        android:label="@string/read_tasks_permission_label"
+        android:protectionLevel="dangerous" />
+
+    <permission
+        android:name="${applicationId}.permission.WRITE_TASKS"
+        android:description="@string/tasks_permission_description"
+        android:label="@string/write_tasks_permission_label"
+        android:protectionLevel="dangerous" />
+
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -315,6 +328,13 @@
         <receiver
             android:name=".receivers.DummyAlarmReceiver"
             android:exported="false" />
+
+        <provider
+            android:name=".providers.TasksProvider"
+            android:authorities="${applicationId}.tasks"
+            android:exported="true"
+            android:readPermission="${applicationId}.permission.READ_TASKS"
+            android:writePermission="${applicationId}.permission.WRITE_TASKS" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

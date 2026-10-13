@@ -102,6 +102,12 @@ interface EventsDao {
     @Query("SELECT * FROM events WHERE source = :source AND type = $TYPE_EVENT")
     fun getEventsFromCalDAVCalendar(source: String): List<Event>
 
+    @Query("SELECT * FROM events WHERE source = :source AND type = $TYPE_TASK")
+    fun getTasksFromDavTaskList(source: String): List<Event>
+
+    @Query("UPDATE events SET import_id = :importId, source = :source WHERE id = :id AND type = $TYPE_TASK")
+    fun updateTaskImportIdAndSource(importId: String, source: String, id: Long)
+
     @Query("SELECT * FROM events WHERE id IN (:ids)")
     fun getEventsOrTasksWithIds(ids: List<Long>): List<Event>
 

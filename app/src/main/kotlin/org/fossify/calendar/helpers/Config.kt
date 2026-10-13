@@ -154,6 +154,10 @@ class Config(context: Context) : BaseConfig(context) {
         get() = prefs.getString(CALDAV_SYNCED_CALENDAR_IDS, "")!!
         set(calendarIDs) = prefs.edit().putString(CALDAV_SYNCED_CALENDAR_IDS, calendarIDs).apply()
 
+    var davSyncedTaskListIds: String
+        get() = prefs.getString(DAV_SYNCED_TASK_LIST_IDS, "")!!
+        set(taskListIds) = prefs.edit().putString(DAV_SYNCED_TASK_LIST_IDS, taskListIds).apply()
+
     var lastUsedCaldavCalendarId: Int
         get() = prefs.getInt(
             LAST_USED_CALDAV_CALENDAR,
@@ -206,6 +210,9 @@ class Config(context: Context) : BaseConfig(context) {
     fun getSyncedCalendarIdsAsList() =
         caldavSyncedCalendarIds.split(",").filter { it.trim().isNotEmpty() }
             .map { Integer.parseInt(it) }.toMutableList() as ArrayList<Int>
+
+    fun getSyncedTaskListIdsAsList() =
+        davSyncedTaskListIds.split(",").filter { it.trim().isNotEmpty() }.map { it.toLong() }
 
     fun getDisplayCalendarsAsList() =
         displayCalendars.map { it.toLong() }.toMutableList() as ArrayList<Long>
