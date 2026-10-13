@@ -17,6 +17,7 @@ import org.fossify.calendar.dialogs.RepeatLimitTypePickerDialog
 import org.fossify.calendar.dialogs.RepeatRuleWeeklyDialog
 import org.fossify.calendar.dialogs.SelectCalendarDialog
 import org.fossify.calendar.extensions.calendarsDB
+import org.fossify.calendar.extensions.davTasksHelper
 import org.fossify.calendar.extensions.config
 import org.fossify.calendar.extensions.eventsDB
 import org.fossify.calendar.extensions.eventsHelper
@@ -498,6 +499,11 @@ class TaskActivity : SimpleActivity() {
             return
         }
 
+        if (!davTasksHelper.canWriteTask(mTask, mCalendarId)) {
+            runOnUiThread { toast(R.string.insufficient_permissions) }
+            return
+        }
+
         val wasRepeatable = mTask.repeatInterval > 0
         val newImportId = if (mTask.id != null) {
             mTask.importId
@@ -650,6 +656,19 @@ class TaskActivity : SimpleActivity() {
             return
         }
 
+        ensureBackgroundThread {
+            val canWrite = davTasksHelper.canWriteTask(mTask, mTask.calendarId)
+            runOnUiThread {
+                if (canWrite) {
+                    showDeleteTaskDialog()
+                } else {
+                    toast(R.string.insufficient_permissions)
+                }
+            }
+        }
+    }
+
+    private fun showDeleteTaskDialog() {
         DeleteEventDialog(this, arrayListOf(mTask.id!!), mTask.repeatInterval > 0, isTask = true) {
             ensureBackgroundThread {
                 when (it) {
@@ -841,6 +860,12 @@ class TaskActivity : SimpleActivity() {
 
     private fun toggleCompletion() {
         ensureBackgroundThread {
+            // the completion of recurring tasks stays local
+            if (mTask.repeatInterval == 0 && !davTasksHelper.canWriteTask(mTask, mTask.calendarId)) {
+                runOnUiThread { toast(R.string.insufficient_permissions) }
+                return@ensureBackgroundThread
+            }
+
             val task = mTask.copy(startTS = mOriginalStartTS)
             updateTaskCompletion(task, completed = !mTaskCompleted)
             hideKeyboard()

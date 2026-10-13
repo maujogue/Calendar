@@ -23,6 +23,7 @@ import org.fossify.calendar.models.DavTaskList
 import org.fossify.calendar.models.Event
 import org.fossify.calendar.models.Reminder
 import org.fossify.calendar.providers.TasksContract
+import org.fossify.calendar.providers.TasksDatabaseHelper
 import org.fossify.calendar.providers.TasksContract.Alarm
 import org.fossify.calendar.providers.TasksContract.Properties
 import org.fossify.calendar.providers.TasksContract.TaskLists
@@ -47,6 +48,20 @@ class DavTasksHelper(val context: Context) {
         private const val DAY_CODE_LENGTH = 8
         private const val MINUTE_MS = 60_000L
         private const val PERCENT_COMPLETED = 100
+
+        // columns that belong to the remote copy of a task, they are not kept when a task moves to another list
+        private val NOT_MOVED_TASK_COLUMNS = setOf(
+            TasksContract._ID,
+            Tasks.LIST_ID,
+            TasksContract._SYNC_ID,
+            TasksContract.SYNC_VERSION,
+            TasksContract._DIRTY,
+            TasksContract._DELETED,
+            Tasks.VERSION,
+            Tasks.PARENT_ID,
+            Tasks.ORIGINAL_INSTANCE_SYNC_ID,
+            Tasks.ORIGINAL_INSTANCE_ID,
+        ) + TasksContract.SYNC_COLUMNS
 
         private val pullLock = Any()
         private val scheduleLock = Any()
@@ -395,6 +410,17 @@ class DavTasksHelper(val context: Context) {
         return context.calendarsDB.getCalendarWithId(calendarId)?.davTaskListId ?: 0L
     }
 
+    /** DAVx⁵ discards local changes in read-only lists, and fails on local deletions in them. */
+    fun isTaskListWritable(taskListId: Long) = getTaskLists(listOf(taskListId)).firstOrNull()?.canWrite() == true
+
+    /** Checks if [task] can be stored in the calendar [calendarId], the task lists involved have to be writable. */
+    fun canWriteTask(task: Event, calendarId: Long): Boolean {
+        val listIds = listOf(task.getDavTaskListId(), getTaskListIdOfCalendar(calendarId))
+            .filter { it != 0L }
+            .distinct()
+        return listIds.all { isTaskListWritable(it) }
+    }
+
     /** Adds a task that was just stored in the app database to the provider, if its calendar is a synced task list. */
     fun insertTask(task: Event) {
         if (task.id == null) {
@@ -408,6 +434,10 @@ class DavTasksHelper(val context: Context) {
                 task.source = SOURCE_SIMPLE_CALENDAR
                 context.eventsDB.updateTaskImportIdAndSource(task.importId, task.source, task.id!!)
             }
+            return
+        }
+
+        if (!isTaskListWritable(taskListId)) {
             return
         }
 
@@ -432,37 +462,99 @@ class DavTasksHelper(val context: Context) {
     fun updateTask(task: Event) {
         val targetListId = getTaskListIdOfCalendar(task.calendarId)
         val currentListId = task.getDavTaskListId()
-        if (currentListId != 0L && currentListId != targetListId) {
-            deleteTask(task)
-            task.importId = generateImportId()
-            task.source = SOURCE_SIMPLE_CALENDAR
-            context.eventsDB.updateTaskImportIdAndSource(task.importId, task.source, task.id!!)
-        }
+        when {
+            currentListId == targetListId -> if (targetListId != 0L && isTaskListWritable(targetListId)) {
+                updateRemoteTask(task, targetListId)
+            }
 
-        if (targetListId == 0L) {
-            return
-        }
+            currentListId == 0L -> insertTask(task)
+            targetListId == 0L -> {
+                deleteTask(task)
+                task.importId = generateImportId()
+                task.source = SOURCE_SIMPLE_CALENDAR
+                context.eventsDB.updateTaskImportIdAndSource(task.importId, task.source, task.id!!)
+            }
 
-        if (currentListId != targetListId) {
-            insertTask(task)
-            return
+            else -> moveTask(task, currentListId, targetListId)
         }
+    }
 
+    private fun updateRemoteTask(task: Event, taskListId: Long) {
         val remoteId = task.getCalDAVEventId()
         val existing = getRemoteTimes(remoteId) ?: return
         val values = fillTaskValues(task, existing)
         context.contentResolver.update(ContentUris.withAppendedId(Tasks.getContentUri(), remoteId), values, null, null)
-        val reference = if (values.containsKey(Tasks.DUE)) {
-            Alarm.ALARM_REFERENCE_DUE_DATE
-        } else {
-            Alarm.ALARM_REFERENCE_START_DATE
+        writeAlarms(remoteId, task, getAlarmReference(values))
+        requestSync(taskListId)
+    }
+
+    /**
+     * Moves a task to another list of the provider. Its UID and all the fields the app doesn't edit
+     * (priority, categories, unknown properties...) are kept, only the remote copy in the old list is deleted.
+     */
+    private fun moveTask(task: Event, currentListId: Long, targetListId: Long) {
+        if (!isTaskListWritable(targetListId)) {
+            return
         }
-        writeAlarms(remoteId, task, reference)
+
+        val oldRemoteId = task.getCalDAVEventId()
+        val movedValues = getMovedTaskValues(oldRemoteId)
+        if (movedValues == null) {
+            // the remote task is gone already, store it as a new one
+            insertTask(task)
+            return
+        }
+
+        val values = movedValues.apply {
+            putAll(fillTaskValues(task, getRemoteTimes(oldRemoteId)))
+            put(Tasks.LIST_ID, targetListId)
+        }
+
+        val uri = context.contentResolver.insert(Tasks.getContentUri(), values) ?: return
+        val newRemoteId = ContentUris.parseId(uri)
+        copyProperties(oldRemoteId, newRemoteId)
+        writeAlarms(newRemoteId, task, getAlarmReference(values))
+        if (isTaskListWritable(currentListId)) {
+            context.contentResolver.delete(ContentUris.withAppendedId(Tasks.getContentUri(), oldRemoteId), null, null)
+        }
+
+        task.importId = getImportId(targetListId, newRemoteId)
+        task.source = getSource(targetListId)
+        context.eventsDB.updateTaskImportIdAndSource(task.importId, task.source, task.id!!)
+        requestSync(currentListId)
         requestSync(targetListId)
     }
 
+    private fun getMovedTaskValues(remoteId: Long): ContentValues? {
+        val columns = (TasksDatabaseHelper.TASK_COLUMNS - NOT_MOVED_TASK_COLUMNS).toTypedArray()
+        var values: ContentValues? = null
+        query(Tasks.getContentUri(), columns, "${TasksContract._ID} = ?", arrayOf(remoteId.toString())) { cursor ->
+            values = cursor.toContentValues()
+        }
+        return values
+    }
+
+    // alarms are rewritten by writeAlarms
+    private fun copyProperties(fromRemoteId: Long, toRemoteId: Long) {
+        val columns = (listOf(Properties.MIMETYPE) + Properties.DATA_COLUMNS).toTypedArray()
+        val selection = "${Properties.TASK_ID} = ? AND ${Properties.MIMETYPE} != ?"
+        val selectionArgs = arrayOf(fromRemoteId.toString(), Alarm.CONTENT_ITEM_TYPE)
+        query(Properties.getContentUri(), columns, selection, selectionArgs) { cursor ->
+            val values = cursor.toContentValues().apply {
+                put(Properties.TASK_ID, toRemoteId)
+            }
+            context.contentResolver.insert(Properties.getContentUri(), values)
+        }
+    }
+
+    private fun getAlarmReference(values: ContentValues) = if (values.containsKey(Tasks.DUE)) {
+        Alarm.ALARM_REFERENCE_DUE_DATE
+    } else {
+        Alarm.ALARM_REFERENCE_START_DATE
+    }
+
     fun deleteTask(task: Event) {
-        if (!task.isDavTask()) {
+        if (!task.isDavTask() || !isTaskListWritable(task.getDavTaskListId())) {
             return
         }
 
@@ -476,7 +568,7 @@ class DavTasksHelper(val context: Context) {
 
     fun updateTaskCompletion(task: Event, completed: Boolean) {
         // the completion of recurring tasks is kept per occurrence and stays local
-        if (!task.isDavTask() || task.repeatInterval != 0) {
+        if (!task.isDavTask() || task.repeatInterval != 0 || !isTaskListWritable(task.getDavTaskListId())) {
             return
         }
 
@@ -640,6 +732,19 @@ class DavTasksHelper(val context: Context) {
     private fun Cursor.long(column: String): Long? {
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getString(index)?.toLongOrNull() ?: getLong(index)
+    }
+
+    private fun Cursor.toContentValues() = ContentValues().apply {
+        for (index in 0 until columnCount) {
+            val column = getColumnName(index)
+            when (getType(index)) {
+                Cursor.FIELD_TYPE_NULL -> putNull(column)
+                Cursor.FIELD_TYPE_INTEGER -> put(column, getLong(index))
+                Cursor.FIELD_TYPE_FLOAT -> put(column, getDouble(index))
+                Cursor.FIELD_TYPE_BLOB -> put(column, getBlob(index))
+                else -> put(column, getString(index))
+            }
+        }
     }
 
     private fun Cursor.string(column: String): String? {

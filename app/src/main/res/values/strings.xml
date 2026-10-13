@@ -234,6 +234,7 @@
     <string name="caldav">CalDAV</string>
     <string name="select_caldav_calendars">Select calendars to sync</string>
     <string name="caldav_task_list">%s (tasks)</string>
+    <string name="tasks_permission_group_label">CalDAV tasks</string>
     <string name="read_tasks_permission_label">read CalDAV tasks</string>
     <string name="write_tasks_permission_label">modify CalDAV tasks</string>
     <string name="tasks_permission_description">Read and modify the CalDAV tasks synchronized into Fossify Calendar</string>

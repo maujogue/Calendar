@@ -4,16 +4,26 @@
     android:installLocation="auto">
 
     <!-- protect the CalDAV tasks provider, sync adapters like DAVx⁵ request these at runtime -->
+    <permission-group
+        android:name="${applicationId}.permission-group.TASKS"
+        android:description="@string/tasks_permission_description"
+        android:icon="@drawable/ic_task_vector"
+        android:label="@string/tasks_permission_group_label" />
+
     <permission
         android:name="${applicationId}.permission.READ_TASKS"
         android:description="@string/tasks_permission_description"
+        android:icon="@drawable/ic_task_vector"
         android:label="@string/read_tasks_permission_label"
+        android:permissionGroup="${applicationId}.permission-group.TASKS"
         android:protectionLevel="dangerous" />
 
     <permission
         android:name="${applicationId}.permission.WRITE_TASKS"
         android:description="@string/tasks_permission_description"
+        android:icon="@drawable/ic_task_vector"
         android:label="@string/write_tasks_permission_label"
+        android:permissionGroup="${applicationId}.permission-group.TASKS"
         android:protectionLevel="dangerous" />
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

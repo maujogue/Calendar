@@ -47,10 +47,12 @@ class EventsHelper(val context: Context) {
 
             if (showWritableOnly) {
                 val caldavCalendars = activity.calDAVHelper.getCalDAVCalendars("", true)
+                val writableTaskListIds = activity.davTasksHelper.getTaskLists().filter { it.canWrite() }.map { it.id }
                 calendars = calendars.filter {
                     val calendar = it
-                    it.caldavCalendarId == 0 || caldavCalendars.firstOrNull { it.id == calendar.caldavCalendarId }
-                        ?.canWrite() == true
+                    val isWritableCalDAV = it.caldavCalendarId == 0 ||
+                        caldavCalendars.firstOrNull { it.id == calendar.caldavCalendarId }?.canWrite() == true
+                    isWritableCalDAV && (!it.isDavTaskList() || it.davTaskListId in writableTaskListIds)
                 }.toMutableList() as ArrayList<CalendarEntity>
             }
 
