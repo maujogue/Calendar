@@ -17,8 +17,11 @@ data class CalendarEntity(
     @ColumnInfo(name = "type") var type: Int = OTHER_EVENT,
     @ColumnInfo(name = "dav_task_list_id") var davTaskListId: Long = 0L
 ) {
-    fun getDisplayTitle() =
-        if (caldavCalendarId == 0 && davTaskListId == 0L) title else "$caldavDisplayName ($caldavEmail)"
+    fun getDisplayTitle() = when {
+        isDavTaskList() -> "$title ($caldavEmail)"
+        caldavCalendarId == 0 -> title
+        else -> "$caldavDisplayName ($caldavEmail)"
+    }
 
     fun isSyncedCalendar() = caldavCalendarId != 0
 

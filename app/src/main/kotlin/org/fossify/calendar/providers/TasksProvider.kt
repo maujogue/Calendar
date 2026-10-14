@@ -10,7 +10,9 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteQueryBuilder
 import android.net.Uri
+import android.os.Binder
 import android.os.Build
+import android.os.Process
 import org.fossify.calendar.helpers.DavTasksHelper
 import org.fossify.calendar.providers.TasksContract.Properties
 import org.fossify.calendar.providers.TasksContract.Relation
@@ -64,6 +66,9 @@ class TasksProvider : ContentProvider() {
 
         // other apps can only show or hide task lists, like in OpenTasks
         private val LIST_COLUMNS_FOR_APPS = setOf(TaskLists.VISIBLE, TaskLists.SYNC_ENABLED)
+
+        // the app itself can also rename and recolor them, like it does for its CalDAV calendars
+        private val LIST_COLUMNS_FOR_OWN_APP = LIST_COLUMNS_FOR_APPS + setOf(TaskLists.LIST_NAME, TaskLists.LIST_COLOR)
     }
 
     private lateinit var dbHelper: TasksDatabaseHelper
@@ -214,7 +219,12 @@ class TasksProvider : ContentProvider() {
 
         val count = when (uriMatcher.match(uri)) {
             LISTS, LIST_ID -> {
-                val listValues = filterValues(values, if (isSyncAdapter) LIST_COLUMNS else LIST_COLUMNS_FOR_APPS)
+                val allowedColumns = when {
+                    isSyncAdapter -> LIST_COLUMNS
+                    Binder.getCallingUid() == Process.myUid() -> LIST_COLUMNS_FOR_OWN_APP
+                    else -> LIST_COLUMNS_FOR_APPS
+                }
+                val listValues = filterValues(values, allowedColumns)
                 if (listValues.size() == 0) 0 else db.update(TABLE_LISTS, listValues, finalSelection, finalArgs)
             }
 

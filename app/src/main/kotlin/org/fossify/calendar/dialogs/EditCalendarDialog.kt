@@ -6,6 +6,7 @@ import androidx.appcompat.app.AlertDialog
 import org.fossify.calendar.R
 import org.fossify.calendar.databinding.DialogCalendarBinding
 import org.fossify.calendar.extensions.calDAVHelper
+import org.fossify.calendar.extensions.davTasksHelper
 import org.fossify.calendar.extensions.eventsHelper
 import org.fossify.calendar.helpers.OTHER_EVENT
 import org.fossify.calendar.models.CalendarEntity
@@ -36,7 +37,7 @@ class EditCalendarDialog(
 
         binding.apply {
             setupColor(typeColor)
-            typeTitle.setText(calendar!!.title)
+            typeTitle.setText(if (calendar!!.isDavTaskList()) calendar!!.caldavDisplayName else calendar!!.title)
             typeColor.setOnClickListener {
                 if (calendar?.caldavCalendarId == 0) {
                     ColorPickerDialog(
@@ -100,6 +101,11 @@ class EditCalendarDialog(
             isCalendarTitleTaken = !isNewEvent && calendar!!.id != calendarId && calendarId != -1L
         }
 
+        // task lists are labelled, so they can have the name of another calendar
+        if (calendar!!.isDavTaskList()) {
+            isCalendarTitleTaken = false
+        }
+
         if (title.isEmpty()) {
             activity.toast(R.string.title_empty)
             return
@@ -111,6 +117,9 @@ class EditCalendarDialog(
         calendar!!.title = title
         if (calendar!!.caldavCalendarId != 0) {
             calendar!!.caldavDisplayName = title
+        } else if (calendar!!.isDavTaskList()) {
+            calendar!!.caldavDisplayName = title
+            calendar!!.title = activity.davTasksHelper.getTaskListTitle(title)
         }
 
         calendar!!.id = activity.eventsHelper.insertOrUpdateCalendarSync(calendar!!)

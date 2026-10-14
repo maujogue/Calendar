@@ -80,6 +80,8 @@ class EventsHelper(val context: Context) {
     fun insertOrUpdateCalendarSync(calendar: CalendarEntity): Long {
         if (calendar.id != null && calendar.id!! > 0 && calendar.caldavCalendarId != 0) {
             context.calDAVHelper.updateCalDAVCalendar(calendar)
+        } else if (calendar.id != null && calendar.id!! > 0 && calendar.isDavTaskList()) {
+            context.davTasksHelper.updateTaskList(calendar)
         }
 
         val newId = calendarsDB.insertOrUpdate(calendar)

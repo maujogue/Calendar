@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import org.fossify.calendar.R
 import org.fossify.calendar.extensions.calendarsDB
 import org.fossify.calendar.extensions.completedTasksDB
 import org.fossify.calendar.extensions.config
@@ -29,6 +30,7 @@ import org.fossify.calendar.providers.TasksContract.Properties
 import org.fossify.calendar.providers.TasksContract.TaskLists
 import org.fossify.calendar.providers.TasksContract.Tasks
 import org.fossify.commons.extensions.getProperPrimaryColor
+import org.fossify.commons.extensions.showErrorToast
 import org.joda.time.DateTimeZone
 import org.joda.time.format.DateTimeFormat
 import java.util.UUID
@@ -121,33 +123,39 @@ class DavTasksHelper(val context: Context) {
         return lists
     }
 
+    // task lists are labelled as such, to tell them apart from the calendar of the same collection
+    fun getTaskListTitle(listName: String): String = context.getString(R.string.caldav_task_list, listName)
+
     fun getCalendarForTaskList(list: DavTaskList): CalendarEntity {
         val existing = context.calendarsDB.getCalendarWithDavTaskListId(list.id)
-        if (existing != null) {
-            if (existing.caldavDisplayName != list.displayName || existing.color != list.color ||
-                existing.caldavEmail != list.accountName
-            ) {
-                existing.apply {
-                    title = list.displayName
-                    caldavDisplayName = list.displayName
-                    caldavEmail = list.accountName
-                    color = list.color
-                }
-                context.calendarsDB.insertOrUpdate(existing)
-            }
-            return existing
-        }
-
-        val calendar = CalendarEntity(
-            id = null,
-            title = list.displayName,
+        val calendar = (existing ?: CalendarEntity(id = null, title = "", color = 0, davTaskListId = list.id)).copy(
+            title = getTaskListTitle(list.displayName),
             color = list.color,
             caldavDisplayName = list.displayName,
-            caldavEmail = list.accountName,
-            davTaskListId = list.id
+            caldavEmail = list.accountName
         )
-        calendar.id = context.eventsHelper.insertOrUpdateCalendarSync(calendar)
+
+        if (existing == null) {
+            calendar.id = context.eventsHelper.insertOrUpdateCalendarSync(calendar)
+        } else if (calendar != existing) {
+            context.calendarsDB.insertOrUpdate(calendar)
+        }
         return calendar
+    }
+
+    /** Stores the name and color edited in the app in the provider, DAVx⁵ keeps them like for CalDAV calendars. */
+    fun updateTaskList(calendar: CalendarEntity) {
+        val values = ContentValues().apply {
+            put(TaskLists.LIST_NAME, calendar.caldavDisplayName)
+            put(TaskLists.LIST_COLOR, calendar.color)
+        }
+
+        val uri = ContentUris.withAppendedId(TaskLists.getContentUri(), calendar.davTaskListId)
+        try {
+            context.contentResolver.update(uri, values, null, null)
+        } catch (e: IllegalArgumentException) {
+            context.showErrorToast(e)
+        }
     }
 
     /** Mirrors every synced task list from the provider into the app database. */
